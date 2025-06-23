@@ -10,6 +10,21 @@ def migrate_fluent_to_xunit(file_path):
 
     # Patterns and replacements
     patterns = [
+        # .ForEach(item => item.Prop.Should().BeTrue()); -> .ForEach(item => Assert.True(item.Prop));
+        (r'([\w\.\(\)\?\[\]]+)\.ForEach\(\s*(\w+)\s*=>\s*\2\.([\w\.]+)\.Should\(\)\.BeTrue\(\)\s*\);', r'\1.ForEach(\2 => Assert.True(\2.\3));'),
+        
+        # .ForEach(item => item.Prop.Should().BeFalse()); -> .ForEach(item => Assert.False(item.Prop));
+        (r'([\w\.\(\)\?\[\]]+)\.ForEach\(\s*(\w+)\s*=>\s*\2\.([\w\.]+)\.Should\(\)\.BeFalse\(\)\s*\);', r'\1.ForEach(\2 => Assert.False(\2.\3));'),
+
+        # .ForEach(item => item.Prop.Should().Be(true)); -> .ForEach(item => Assert.True(item.Prop));
+        (r'([\w\.\(\)\?\[\]]+)\.ForEach\(\s*(\w+)\s*=>\s*\2\.([\w\.]+)\.Should\(\)\.Be\(true\)\s*\);', r'\1.ForEach(\2 => Assert.True(\2.\3));'),
+
+        # .ForEach(item => item.Prop.Should().Be(value)); -> .ForEach(item => Assert.Equal(value, item.Prop));
+        (r'([\w\.\(\)\?\[\]]+)\.ForEach\(\s*(\w+)\s*=>\s*\2\.([\w\.]+)\.Should\(\)\.Be\((.*?)\)\s*\);', r'\1.ForEach(\2 => Assert.Equal(\4, \2.\3));'),
+
+        # .ForEach(item => item.Prop.Should().BeNullOrEmpty()); -> .ForEach(item => Assert.True(string.IsNullOrEmpty(item.Prop)));
+        (r'([\w\.\(\)\?\[\]]+)\.ForEach\(\s*(\w+)\s*=>\s*\2\.([\w\.]+)\.Should\(\)\.BeNullOrEmpty\(\)\s*\);', r'\1.ForEach(\2 => Assert.True(string.IsNullOrEmpty(\2.\3)));'),
+
         # .Should().Be(value) -> Assert.Equal(expected, actual)
         (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.Be\((.*?)\);', r'Assert.Equal(\2, \1);'),
 
@@ -25,14 +40,29 @@ def migrate_fluent_to_xunit(file_path):
         # .Should().NotBeNull() -> Assert.NotNull(actual)
         (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.NotBeNull\(\);', r'Assert.NotNull(\1);'),
         
+        # .Should().BeEmpty() -> Assert.Empty(value)
+        (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.BeEmpty\(\);', r'Assert.Empty(\1);'),
+
+        # .Should().NotBe(Guid.Empty) -> Assert.NotEqual(Guid.Empty, value)
+        (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.NotBe\(Guid\.Empty\);', r'Assert.NotEqual(Guid.Empty, \1);'),
+
+        # .Should().NotBe(value) -> Assert.NotEqual(expected, actual)
+        (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.NotBe\((.*?)\);', r'Assert.NotEqual(\2, \1);'),
+
         # Id.Should().NotBeEmpty() -> Assert.NotEqual(Guid.Empty, guid)
         (r'([\w\.]+\.Id)\.Should\(\)\.NotBeEmpty\(\);', r'Assert.NotEqual(Guid.Empty, \1);'),
 
         # .Should().NotBeEmpty() -> Assert.NotEmpty(collection)
         (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.NotBeEmpty\(\);', r'Assert.NotEmpty(\1);'),
 
+        # .Should().Contain(lambda) -> Assert.Contains(collection, lambda)
+        (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.Contain\(\s*(\w+\s*=>.+?)\s*\);', r'Assert.Contains(\1, \2);'),
+
         # .Should().Contain(item) -> Assert.Contains(item, collection)
-        (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.Contain\((.*?)\);', r'Assert.Contains(\2, \1);'),
+        (r'(.+?)\.Should\(\)\.Contain\((.+?)\);', r'Assert.Contains(\2, \1);'),
+
+        # .Should().ContainSingle(predicate) -> Assert.Single(collection, predicate)
+        (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.ContainSingle\((.*?)\);', r'Assert.Single(\1, \2);'),
 
         # .Should().NotContain(item) -> Assert.DoesNotContain(item, collection)
         (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.NotContain\((.*?)\);', r'Assert.DoesNotContain(\2, \1);'),
@@ -88,11 +118,23 @@ def migrate_fluent_to_xunit(file_path):
         # .Should().BeEquivalentTo() -> Assert.Equal(expected, actual)
         (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.BeEquivalentTo\((.*?)\);', r'Assert.Equal(\2, \1);'),
         
+        # .Should().ThrowAsync<Exception>() -> await Assert.ThrowsAsync<Exception>(action)
+        (r'await\s+([\w\.\(\)\?\[\]]+)\.Should\(\)\.ThrowAsync<([\w\d_\.]+)>\(\);', r'await Assert.ThrowsAsync<\2>(\1);'),
+
         # .Should().ThrowAsync<Exception>() -> await Assert.ThrowsAsync<Exception>(() => act)
         (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.ThrowAsync<(.+?)>\(\)\s*\.WithMessage\((.*?)\);',  r'var exception = await Assert.ThrowsAsync<\2>(\1);\nAssert.Equal(\3, exception.Message);'),
         
         # .Should().BeNullOrEmpty() -> Assert.True(content == null || !content.Any())
-        (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.BeNullOrEmpty\(\);', r'Assert.True(\1 == null || !\1.Any());')
+        (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.BeNullOrEmpty\(\);', r'Assert.True(\1 == null || !\1.Any());'),
+
+        # .Should().NotBeNullOrEmpty() -> Assert.NotNull(value); Assert.NotEmpty(value);
+        (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.NotBeNullOrEmpty\(\);', r'Assert.NotEmpty(\1);'),
+
+        # .Should().BeOfType<Type>() -> Assert.IsType<Type>(value)
+        (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.BeOfType<([\w\d_\.]+)>\(\);', r'Assert.IsType<\2>(\1);'),
+
+        # .Should().HaveCount(number) -> Assert.Equal(number, value.Count)
+        (r'([\w\.\(\)\?\[\]]+)\.Should\(\)\.HaveCount\((.*?)\);', r'Assert.Equal(\2, \1.Count);'),
     ]
 
     # Apply patterns to content
